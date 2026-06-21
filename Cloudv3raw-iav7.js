@@ -189,6 +189,89 @@ export default {
           status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
+      
+      // ── Backup completo — todos los archivos de todos los repos, en streaming ──
+        if (accion === "backup") {
+          const EXTENSIONES_BINARIAS = ['.jpg', '.jpeg'];
+          function esBinario(p) {
+            const lower = p.toLowerCase();
+            return EXTENSIONES_BINARIAS.some(ext => lower.endsWith(ext));
+          }
+
+          const encoder = new TextEncoder();
+          let resolverListo;
+          const streamListo = new Promise(res => { resolverListo = res; });
+
+          const stream = new ReadableStream({
+            async start(controller) {
+              function enviar(obj) {
+                controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+              }
+              try {
+                const respRepos = await fetch("https://api.github.com/user/repos?per_page=100&sort=updated", { headers: ghHeaders });
+                const repos = await respRepos.json();
+                if (!respRepos.ok) {
+                  enviar({ tipo: "error", mensaje: repos.message || "Error listando repos" });
+                  controller.close();
+                  resolverListo();
+                  return;
+                }
+
+                for (const repo of repos) {
+                  let archivos = [];
+                  try {
+                    const respArbol = await fetch(
+                      `https://api.github.com/repos/${repo.full_name}/git/trees/main?recursive=1`,
+                      { headers: ghHeaders }
+                    );
+                    const dataArbol = await respArbol.json();
+                    if (respArbol.ok) archivos = (dataArbol.tree || []).filter(item => item.type === "blob");
+                  } catch(e) {}
+
+                  for (const archivo of archivos) {
+                    try {
+                      const respFile = await fetch(
+                        `https://api.github.com/repos/${repo.full_name}/contents/${archivo.path}?ref=main`,
+                        { headers: ghHeaders }
+                      );
+                      const dataFile = await respFile.json();
+                      if (!respFile.ok || !dataFile.content) continue;
+
+                      const base64Limpio = dataFile.content.replace(/\n/g, '');
+                      const binario = esBinario(archivo.path);
+
+                      if (binario) {
+                        enviar({ tipo: "archivo", repo: repo.full_name, path: archivo.path, binario: true, contenido: base64Limpio });
+                      } else {
+                        const bytes = Uint8Array.from(atob(base64Limpio), c => c.charCodeAt(0));
+                        const texto = new TextDecoder('utf-8').decode(bytes);
+                        enviar({ tipo: "archivo", repo: repo.full_name, path: archivo.path, binario: false, contenido: texto });
+                      }
+                    } catch(e) { /* archivo individual falló — seguir con los demás */ }
+                  }
+                }
+
+                enviar({ tipo: "completo" });
+                controller.close();
+              } catch(err) {
+                enviar({ tipo: "error", mensaje: err.message });
+                controller.close();
+              }
+              resolverListo();
+            }
+          });
+
+          ctx.waitUntil(streamListo);
+
+          return new Response(stream, {
+            headers: {
+              "Content-Type":                "text/plain; charset=utf-8",
+              "Access-Control-Allow-Origin": "*",
+              "Cache-Control":               "no-cache",
+            }
+          });
+        }
+         
     }
     
     if (pathname === "/ai-proxy") {
