@@ -181,16 +181,7 @@ export default {
             headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" } });
         }
 
-        return new Response("Acción no soportada", { status: 400,
-          headers: { "Access-Control-Allow-Origin": "*" } });
-
-      } catch(err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-        });
-      }
-      
-      // ── Backup completo — todos los archivos de todos los repos, en streaming ──
+        // ── Backup completo — todos los archivos de todos los repos, en streaming ──
         if (accion === "backup") {
           const EXTENSIONES_BINARIAS = ['.jpg', '.jpeg'];
           function esBinario(p) {
@@ -271,9 +262,17 @@ export default {
             }
           });
         }
-         
+
+        return new Response("Acción no soportada", { status: 400,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+
+      } catch(err) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
     }
-    
+
     if (pathname === "/ai-proxy") {
       try {
         const body = await request.json();
