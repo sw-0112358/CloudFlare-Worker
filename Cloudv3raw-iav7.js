@@ -622,6 +622,35 @@ export default {
       }
     }
 
+    // ── /proxy-img — imagen con Referer personalizable (genérico) ──
+    if (pathname === "/proxy-img") {
+      try {
+        const referer = searchParams.get("referer") || siteBase;
+        const resp = await fetch(target, {
+          headers: {
+            "Referer":          referer,
+            "User-Agent":       "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+            "Accept":           "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language":  "es-ES,es;q=0.9",
+          }
+        });
+        const buffer      = await resp.arrayBuffer();
+        const contentType = resp.headers.get("content-type") || "image/webp";
+        return new Response(buffer, {
+          status: resp.status,
+          headers: {
+            "Content-Type":                contentType,
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control":               "public, max-age=86400",
+          }
+        });
+      } catch(err) {
+        return new Response("Error: " + err.message, {
+          status: 500, headers: { "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
     // ── /api — endpoint limpio para AJAX/JSF sin reescritura ──
     if (pathname === "/api") {
       const fetchOptions = {
