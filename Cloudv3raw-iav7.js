@@ -651,6 +651,32 @@ export default {
       }
     }
 
+    // ── /nhentai-api — API de nhentai con headers correctos ──
+    if (pathname === "/nhentai-api") {
+      try {
+        const resp = await fetch(target, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+            "Accept":     "application/json, */*",
+            "Referer":    "https://nhentai.net/",
+            "Origin":     "https://nhentai.net",
+          }
+        });
+        const buffer = await resp.arrayBuffer();
+        return new Response(buffer, {
+          status: resp.status,
+          headers: {
+            "Content-Type":                resp.headers.get("content-type") || "application/json",
+            "Access-Control-Allow-Origin": "*",
+          }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
     // ── /api — endpoint limpio para AJAX/JSF sin reescritura ──
     if (pathname === "/api") {
       const fetchOptions = {
