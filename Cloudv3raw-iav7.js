@@ -656,10 +656,20 @@ export default {
       try {
         const resp = await fetch(target, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
-            "Accept":     "application/json, */*",
-            "Referer":    "https://nhentai.net/",
-            "Origin":     "https://nhentai.net",
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept":          "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Referer":         "https://nhentai.net/",
+            "Origin":          "https://nhentai.net",
+            "sec-ch-ua":       '"Chromium";v="124", "Google Chrome";v="124"',
+            "sec-ch-ua-mobile":   "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest":  "empty",
+            "sec-fetch-mode":  "cors",
+            "sec-fetch-site":  "same-origin",
+            "Cache-Control":   "no-cache",
+            "Pragma":          "no-cache",
           }
         });
         const buffer = await resp.arrayBuffer();
