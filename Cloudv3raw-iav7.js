@@ -589,12 +589,90 @@ export default {
         });
 
       } catch(err) {
-        return new Response("Error: " + err.message, { status: 500,
-                                                      headers: { "Access-Control-Allow-Origin": "*" }
+        return new Response("Error: " + err.message, { status: 500,                                                  headers: { "Access-Control-Allow-Origin": "*" }
                                                      });
       }
     }
 
+    // ── /batch-download — descarga secuencial con stream, genérico ──
+    if (pathname === "/batch-download") {
+      try {
+        const dataParam = searchParams.get("data");
+        let body;
+        if (dataParam) {
+          body = JSON.parse(decodeURIComponent(dataParam));
+        } else {
+          const texto = await request.text();
+          if (!texto || !texto.trim()) return new Response("Falta urls[]", { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
+          body = JSON.parse(texto);
+        }
+        const urls    = body.urls;
+        const headers = body.headers || {
+          "Referer":         body.referer || "",
+          "User-Agent":      "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
+          "Accept":          "image/webp,image/apng,image/*,*/*;q=0.8",
+          "Accept-Language": "es-ES,es;q=0.9",
+        };
+        if (!Array.isArray(urls) || !urls.length)
+          return new Response("Falta urls[]", { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
+
+        const encoder = new TextEncoder();
+        const stream  = new ReadableStream({
+          async start(controller) {
+            for (let i = 0; i < urls.length; i++) {
+              const { nombre, url } = urls[i];
+              try {
+                const resp = await fetch(url, { headers });
+                if (!resp.ok) {
+                  const meta = JSON.stringify({ ok: false, nombre, indice: i, error: resp.status });
+                  controller.enqueue(encoder.encode(meta + "\x1e"));
+                  continue;
+                }
+                const buffer      = await resp.arrayBuffer();
+                const contentType = resp.headers.get("content-type") || "image/webp";
+                if (!contentType.startsWith("image/")) {
+                  const meta = JSON.stringify({ ok: false, nombre, indice: i, error: "no-imagen" });
+                  controller.enqueue(encoder.encode(meta + "\x1e"));
+                  continue;
+                }
+               
+                
+                const bytes   = new Uint8Array(buffer);
+                // Chunk múltiplo de 3 para evitar padding intermedio
+                const CHUNK   = 8190; // 8190 = 2730 * 3
+                let b64 = '';
+                for (let b = 0; b < bytes.length; b += CHUNK) {
+                  b64 += btoa(String.fromCharCode(...bytes.subarray(b, b + CHUNK)));
+                }
+                const b64clean = b64.replace(/[\r\n]/g, '');              
+                const meta = JSON.stringify({ ok: true, nombre, indice: i, tipo: contentType, size: buffer.byteLength });
+                controller.enqueue(encoder.encode(meta + "\x1e" + b64clean + "\x1e"));
+             
+              
+              } catch(err) {
+                const meta = JSON.stringify({ ok: false, nombre, indice: i, error: err.message });
+                controller.enqueue(encoder.encode(meta + "\x1e"));
+              }
+            }
+            controller.enqueue(encoder.encode(JSON.stringify({ ok: true, fin: true }) + "\x1e"));
+            controller.close();
+          }
+        });
+
+        return new Response(stream, {
+          headers: {
+            "Content-Type":                "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin": "*",
+            "Cache-Control":               "no-cache",
+            "X-Content-Type-Options":      "nosniff",
+          }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
 
     const targetURL = new URL(target);
     const siteBase = `${targetURL.protocol}//${targetURL.host}`;
@@ -649,73 +727,6 @@ export default {
       } catch(err) {
         return new Response("Error: " + err.message, {
           status: 500, headers: { "Access-Control-Allow-Origin": "*" }
-        });
-      }
-    }
-    
-    
-    // ── /batch-download — descarga secuencial con stream, genérico ──
-    if (pathname === "/batch-download") {
-      try {
-        const dataParam = searchParams.get("data");
-        const body    = dataParam ? JSON.parse(decodeURIComponent(dataParam)) : JSON.parse(await request.text());
-        const urls    = body.urls; // [{ nombre, url }, ...]
-        const headers = body.headers || {
-          "Referer":         body.referer || "",
-          "User-Agent":      "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 Chrome/120.0 Safari/537.36",
-          "Accept":          "image/webp,image/apng,image/*,*/*;q=0.8",
-          "Accept-Language": "es-ES,es;q=0.9",
-        };
-        if (!Array.isArray(urls) || !urls.length)
-          return new Response("Falta urls[]", { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
-
-        const encoder = new TextEncoder();
-        const stream  = new ReadableStream({
-          async start(controller) {
-            for (let i = 0; i < urls.length; i++) {
-              const { nombre, url } = urls[i];
-              try {
-                const resp = await fetch(url, { headers });
-                if (!resp.ok) {
-                  const meta = JSON.stringify({ ok: false, nombre, indice: i, error: resp.status });
-                  controller.enqueue(encoder.encode(meta + "\x1e"));
-                  continue;
-                }
-                const buffer      = await resp.arrayBuffer();
-                const contentType = resp.headers.get("content-type") || "image/webp";
-                if (!contentType.startsWith("image/")) {
-                  const meta = JSON.stringify({ ok: false, nombre, indice: i, error: "no-imagen" });
-                  controller.enqueue(encoder.encode(meta + "\x1e"));
-                  continue;
-                }
-                const bytes  = new Uint8Array(buffer);
-                let b64 = '';
-                for (let b = 0; b < bytes.length; b += 8192) {
-                  b64 += btoa(String.fromCharCode(...bytes.subarray(b, b + 8192)));
-                }
-                const meta = JSON.stringify({ ok: true, nombre, indice: i, tipo: contentType, size: buffer.byteLength });
-                controller.enqueue(encoder.encode(meta + "\x1e" + b64 + "\x1e"));
-              } catch(err) {
-                const meta = JSON.stringify({ ok: false, nombre, indice: i, error: err.message });
-                controller.enqueue(encoder.encode(meta + "\x1e"));
-              }
-            }
-            controller.enqueue(encoder.encode(JSON.stringify({ ok: true, fin: true }) + "\x1e"));
-            controller.close();
-          }
-        });
-
-        return new Response(stream, {
-          headers: {
-            "Content-Type":                "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin": "*",
-            "Cache-Control":               "no-cache",
-            "X-Content-Type-Options":      "nosniff",
-          }
-        });
-      } catch(err) {
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
     }
