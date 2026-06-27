@@ -5,10 +5,12 @@ export default {
     // CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
+        status: 204,
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin":  "*",
           "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
           "Access-Control-Allow-Headers": "*",
+          "Access-Control-Max-Age":       "86400",
         },
       });
     }
@@ -655,7 +657,8 @@ export default {
     // ── /batch-download — descarga secuencial con stream, genérico ──
     if (pathname === "/batch-download") {
       try {
-        const body    = await request.json();
+        const dataParam = searchParams.get("data");
+        const body    = dataParam ? JSON.parse(decodeURIComponent(dataParam)) : JSON.parse(await request.text());
         const urls    = body.urls; // [{ nombre, url }, ...]
         const headers = body.headers || {
           "Referer":         body.referer || "",
@@ -685,10 +688,11 @@ export default {
                   controller.enqueue(encoder.encode(meta + "\x1e"));
                   continue;
                 }
-                const bytes = new Uint8Array(buffer);
-                let bin = "";
-                for (let b = 0; b < bytes.length; b++) bin += String.fromCharCode(bytes[b]);
-                const b64  = btoa(bin);
+                const bytes  = new Uint8Array(buffer);
+                let b64 = '';
+                for (let b = 0; b < bytes.length; b += 8192) {
+                  b64 += btoa(String.fromCharCode(...bytes.subarray(b, b + 8192)));
+                }
                 const meta = JSON.stringify({ ok: true, nombre, indice: i, tipo: contentType, size: buffer.byteLength });
                 controller.enqueue(encoder.encode(meta + "\x1e" + b64 + "\x1e"));
               } catch(err) {
