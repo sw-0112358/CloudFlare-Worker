@@ -681,19 +681,37 @@ export default {
     // ── /raw — contenido tal cual sin reescritura ──
     if (pathname === "/raw") {
       try {
+        const targetHost     = new URL(target).hostname;
+        const cookieKey      = "fh_cookie_" + targetHost.replace(/\./g, "_");
+        const cookieGuardada = await CloudKV.get(cookieKey) || "";
+
         const respuesta = await fetch(target, {
           method: request.method,
           headers: {
-            "User-Agent": "Mozilla/5.0 (compatible; proxy/1.0)",
-            "Accept": "*/*",
+            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept":          "*/*",
+            "Accept-Language": "es-ES,es;q=0.9",
+            "Referer":         siteBase,
+            "Cookie":          cookieGuardada,
           },
         });
+
+        // Guardar cookies nuevas
+        const setCookie = respuesta.headers.get("set-cookie");
+        if (setCookie) {
+          const nueva = setCookie.split(",")
+            .map(c => c.trim().split(";")[0].trim())
+            .filter(Boolean)
+            .join("; ");
+          if (nueva) await CloudKV.put(cookieKey, nueva, { expirationTtl: 3600 });
+        }
+
         const buffer      = await respuesta.arrayBuffer();
         const contentType = respuesta.headers.get("content-type") || "application/octet-stream";
         return new Response(buffer, {
           status: respuesta.status,
           headers: {
-            "Content-Type": contentType,
+            "Content-Type":                contentType,
             "Access-Control-Allow-Origin": "*",
           },
         });
@@ -731,23 +749,47 @@ export default {
       }
     }
 
-    // ── /fetch-html — fetch genérico simulando navegación real ──
+    // ── /fetch-html — fetch genérico simulando navegación real (con cookies por dominio) ──
     if (pathname === "/fetch-html") {
       try {
-        const referer  = searchParams.get("referer") || siteBase;
-        const origin   = new URL(referer).origin;
+        const referer    = searchParams.get("referer") || siteBase;
+        const origin     = new URL(referer).origin;
+        const targetHost = new URL(target).hostname;
+        const cookieKey  = "fh_cookie_" + targetHost.replace(/\./g, "_");
+
+        // Recuperar cookie guardada para este dominio
+        const cookieGuardada = await CloudKV.get(cookieKey) || "";
+
         const resp = await fetch(target, {
           headers: {
-            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept":          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer":         referer,
-            "Origin":          origin,
-            "sec-fetch-dest":  "document",
-            "sec-fetch-mode":  "navigate",
-            "sec-fetch-site":  "same-origin",
+            "User-Agent":                "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.82 Mobile Safari/537.36",
+            "Accept":                    "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language":           "es-ES,es;q=0.9,en;q=0.8",
+            "Accept-Encoding":           "gzip, deflate, br",
+            "Referer":                   referer,
+            "Origin":                    origin,
+            "Cookie":                    cookieGuardada,
+            "sec-ch-ua":                 '"Chromium";v="124", "Google Chrome";v="124"',
+            "sec-ch-ua-mobile":          "?1",
+            "sec-ch-ua-platform":        '"Android"',
+            "sec-fetch-dest":            "document",
+            "sec-fetch-mode":            "navigate",
+            "sec-fetch-site":            "same-origin",
+            "sec-fetch-user":            "?1",
+            "Upgrade-Insecure-Requests": "1",
           }
         });
+
+        // Guardar cookies nuevas en KV por dominio
+        const setCookie = resp.headers.get("set-cookie");
+        if (setCookie) {
+          const nueva = setCookie.split(",")
+            .map(c => c.trim().split(";")[0].trim())
+            .filter(Boolean)
+            .join("; ");
+          if (nueva) await CloudKV.put(cookieKey, nueva, { expirationTtl: 3600 });
+        }
+
         const buffer = await resp.arrayBuffer();
         return new Response(buffer, {
           status: resp.status,
