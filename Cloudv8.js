@@ -1,6 +1,7 @@
 export default {
   async fetch(request, env, ctx) {
     const CloudKV = env.CloudKV;
+    const CloudR2 = env.cloudr2;
 
     // CORS preflight
     if (request.method === "OPTIONS") {
@@ -21,9 +22,96 @@ export default {
     const nombre = searchParams.get("nombre");
     const proxyBase = reqURL.origin;
 
-    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download"];
+    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download", "/r2-list", "/r2-upload", "/r2-delete","/r2-download"];
+    
     if (!sinTarget.includes(pathname) && (!target || !/^https?:\/\//.test(target))) {
       return new Response("URL inválida o falta ?target=", { status: 400 });
+    }
+
+    // ── /r2-list — listar objetos del bucket ──
+    if (pathname === "/r2-list") {
+      try {
+        const prefix = searchParams.get("prefix") || "";
+        const listed = await CloudR2.list({ prefix });
+        const objetos = listed.objects.map(o => ({
+          key:      o.key,
+          size:     o.size,
+          uploaded: o.uploaded,
+        }));
+        return new Response(JSON.stringify({ ok: true, objetos }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-upload — subir un archivo al bucket ──
+    if (pathname === "/r2-upload") {
+      try {
+        const key = searchParams.get("key");
+        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta ?key=" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const buffer = await request.arrayBuffer();
+        await CloudR2.put(key, buffer, {
+          httpMetadata: { contentType: "application/octet-stream" }
+        });
+        return new Response(JSON.stringify({ ok: true, key, size: buffer.byteLength }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-delete — eliminar un objeto del bucket ──
+    if (pathname === "/r2-delete") {
+      try {
+        const key = searchParams.get("key");
+        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta ?key=" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        await CloudR2.delete(key);
+        return new Response(JSON.stringify({ ok: true, key }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-download — descargar un objeto del bucket ──
+    if (pathname === "/r2-download") {
+      try {
+        const key = searchParams.get("key");
+        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta ?key=" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const objeto = await CloudR2.get(key);
+        if (!objeto) return new Response(JSON.stringify({ ok: false, error: "Archivo no encontrado" }), {
+          status: 404, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const buffer = await objeto.arrayBuffer();
+        const nombreArchivo = key.split("/").pop();
+        return new Response(buffer, {
+          headers: {
+            "Content-Type":                "application/octet-stream",
+            "Content-Disposition":         `attachment; filename="${nombreArchivo}"`,
+            "Access-Control-Allow-Origin": "*",
+          }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
     }
 
     // ── /kv-save — guardar historial ──
