@@ -51,8 +51,8 @@ export default {
     // ── /r2-upload — subir un archivo al bucket ──
     if (pathname === "/r2-upload") {
       try {
-        const key = searchParams.get("key");
-        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta ?key=" }), {
+        const key = decodeURIComponent(request.headers.get("X-R2-Key") || searchParams.get("key") || "");
+        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta key" }), {
           status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
         const buffer = await request.arrayBuffer();
