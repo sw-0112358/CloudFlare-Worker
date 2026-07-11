@@ -22,7 +22,7 @@ export default {
     const nombre = searchParams.get("nombre");
     const proxyBase = reqURL.origin;
 
-    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download", "/r2-list", "/r2-upload", "/r2-delete","/r2-download"];
+    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download", "/r2-list", "/r2-upload", "/r2-delete", "/r2-download", "/r2-multipart-create", "/r2-multipart-part", "/r2-multipart-complete"];
     
     if (!sinTarget.includes(pathname) && (!target || !/^https?:\/\//.test(target))) {
       return new Response("URL inválida o falta ?target=", { status: 400 });
@@ -60,6 +60,68 @@ export default {
           httpMetadata: { contentType: "application/octet-stream" }
         });
         return new Response(JSON.stringify({ ok: true, key, size: buffer.byteLength }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-multipart-create — iniciar subida multipart ──
+    if (pathname === "/r2-multipart-create") {
+      try {
+        const key = decodeURIComponent(request.headers.get("X-R2-Key") || "");
+        if (!key) return new Response(JSON.stringify({ ok: false, error: "Falta key" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const mpu = await CloudR2.createMultipartUpload(key, {
+          httpMetadata: { contentType: "application/octet-stream" }
+        });
+        return new Response(JSON.stringify({ ok: true, uploadId: mpu.uploadId, key: mpu.key }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-multipart-part — subir una parte ──
+    if (pathname === "/r2-multipart-part") {
+      try {
+        const key      = decodeURIComponent(request.headers.get("X-R2-Key") || "");
+        const uploadId = request.headers.get("X-Upload-Id") || "";
+        const partNum  = parseInt(request.headers.get("X-Part-Number") || "1", 10);
+        if (!key || !uploadId) return new Response(JSON.stringify({ ok: false, error: "Faltan headers" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const mpu  = CloudR2.resumeMultipartUpload(key, uploadId);
+        const body = await request.arrayBuffer();
+        const part = await mpu.uploadPart(partNum, body);
+        return new Response(JSON.stringify({ ok: true, etag: part.etag, partNumber: part.partNumber }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-multipart-complete — completar subida multipart ──
+    if (pathname === "/r2-multipart-complete") {
+      try {
+        const body     = await request.json();
+        const { key, uploadId, parts } = body;
+        if (!key || !uploadId || !parts) return new Response(JSON.stringify({ ok: false, error: "Faltan campos" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const mpu = CloudR2.resumeMultipartUpload(key, uploadId);
+        await mpu.complete(parts);
+        return new Response(JSON.stringify({ ok: true, key }), {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       } catch(err) {
