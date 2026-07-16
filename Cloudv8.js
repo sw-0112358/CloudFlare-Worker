@@ -557,6 +557,29 @@ export default {
           });
           parsearDelta = (obj) => obj.choices?.[0]?.delta?.content || "";
 
+        } else if (modelo === "openai") {
+          if (!cfg.openai) return new Response("Sin key OpenAI", { status: 401,
+                                                                    headers: { "Access-Control-Allow-Origin": "*" } });
+          const modeloOpenAIFinal = body.modeloOpenAI || "gpt-4o";
+          const payload = {
+            model: modeloOpenAIFinal,
+            stream: true,
+            messages: [
+              { role: "system", content: promptFinal },
+              ...historialTruncado,
+              { role: "user", content: mensaje }
+            ]
+          };
+          apiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type":  "application/json",
+              "Authorization": `Bearer ${cfg.openai}`
+            },
+            body: JSON.stringify(payload)
+          });
+          parsearDelta = (obj) => obj.choices?.[0]?.delta?.content || "";
+
         } else {
           return new Response("Modelo no soportado", { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
         }
