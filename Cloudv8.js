@@ -149,7 +149,7 @@ export default {
       }
     }
 
-    // ── /r2-download — descargar un objeto del bucket ──
+    // ── /r2-download — descargar un objeto del bucket (stream, sin límite de RAM) ──
     if (pathname === "/r2-download") {
       try {
         const key = searchParams.get("key");
@@ -160,15 +160,15 @@ export default {
         if (!objeto) return new Response(JSON.stringify({ ok: false, error: "Archivo no encontrado" }), {
           status: 404, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
-        const buffer = await objeto.arrayBuffer();
         const nombreArchivo = key.split("/").pop();
-        return new Response(buffer, {
-          headers: {
-            "Content-Type":                "application/octet-stream",
-            "Content-Disposition":         `attachment; filename="${nombreArchivo}"`,
-            "Access-Control-Allow-Origin": "*",
-          }
-        });
+        const headers = {
+          "Content-Type":                "application/octet-stream",
+          "Content-Disposition":         `attachment; filename="${nombreArchivo}"`,
+          "Access-Control-Allow-Origin": "*",
+        };
+        if (objeto.size) headers["Content-Length"] = String(objeto.size);
+        // objeto.body es un ReadableStream — nunca toca arrayBuffer(), sin límite de RAM
+        return new Response(objeto.body, { headers });
       } catch(err) {
         return new Response(JSON.stringify({ ok: false, error: err.message }), {
           status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
