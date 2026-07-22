@@ -22,10 +22,211 @@ export default {
     const nombre = searchParams.get("nombre");
     const proxyBase = reqURL.origin;
 
-    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download", "/r2-list", "/r2-upload", "/r2-delete", "/r2-download", "/r2-multipart-create", "/r2-multipart-part", "/r2-multipart-complete"];
+    const sinTarget = ["/claude", "/kv-save", "/kv-load", "/kv-delete", "/iaroll-save", "/iaroll-load", "/ai-proxy", "/tts-proxy", "/gtts", "/gtts-init", "/github-proxy", "/batch-download", "/r2-list", "/r2-upload", "/r2-delete", "/r2-download", "/r2-multipart-create", "/r2-multipart-part", "/r2-multipart-complete", "/r2-multipart-abort", "/r2-move", "/app-src"];
+    
+    // ── / — reloj (disfraz) desde R2 ──
+    if (pathname === '/' || pathname === '') {
+      const clockObj = await CloudR2.get('app/clock/index.html');
+      if (clockObj) {
+        const clockHtml = await clockObj.text();
+        return new Response(clockHtml, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }
+      return new Response('Not found', { status: 404 });
+    }
+
+    // ── /app/{nombre} → HTML vacío + token ──
+    // ── /app/{nombre}/{recurso} → recurso directo ──
+    if (pathname.startsWith("/app/") || pathname === "/app") {
+      if (pathname === "/app") return Response.redirect(reqURL.origin + "/", 302);
+      try {
+        const partes    = pathname.replace("/app/", "").split("/");
+        const appNombre = partes[0];
+        if (!appNombre) return new Response("Falta nombre de app", { status: 400,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+
+        const esHtml = !!partes[1] && partes[1].endsWith('.html');
+        const esRecurso = !!partes[1] && !esHtml;
+        const htmlSolicitado = esHtml ? partes[1] : 'index.html';
+        
+        // Recursos → directo sin token
+        if (esRecurso) {
+          const r2Key = `app/${appNombre}/${partes.slice(1).join("/")}`;
+          const obj   = await CloudR2.get(r2Key);
+          if (!obj) {
+            // Si no encuentra el recurso, servir el reloj
+            const clockObj = await CloudR2.get('app/clock/index.html');
+            if (clockObj) {
+              const clockHtml = await clockObj.text();
+              return new Response(clockHtml, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+            }
+            return new Response('Not found', { status: 404 });
+          }
+          const ext  = r2Key.split(".").pop().toLowerCase();
+          const tipos = { png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg",
+                          svg:"image/svg+xml", ico:"image/x-icon", webp:"image/webp",
+                          css:"text/css; charset=utf-8", js:"application/javascript; charset=utf-8", json:"application/json; charset=utf-8",
+                          woff2:"font/woff2", woff:"font/woff" };
+          const esTexto = ["js","css","json","svg","html"].includes(ext);
+          if (esTexto) {
+            const texto = await obj.text();
+            return new Response(texto, { headers: {
+              "Content-Type":                tipos[ext] || "text/plain; charset=utf-8",
+              "Cache-Control":               "no-cache",
+              "Access-Control-Allow-Origin": "*"
+            }});
+          }
+          return new Response(obj.body, { headers: {
+            "Content-Type":                tipos[ext] || "application/octet-stream",
+            "Cache-Control":               "no-cache",
+            "Access-Control-Allow-Origin": "*"
+          }});
+        }
+
+        // index.html o .html directo → generar token y devolver HTML vacío
+        // Si se pide /app/{nombre}/{archivo}.html → servir como app principal
+        const token  = crypto.randomUUID();
+        const kvKey  = `_apptoken_${token}`;
+        await CloudKV.put(kvKey, appNombre, { expirationTtl: 60 });
+
+        const html = `<!DOCTYPE html>
+<html lang="es"><head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+ 
+ <title>Cargando…</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{background:#fff;display:flex;align-items:center;justify-content:center;height:100vh;}
+    .esfera{width:180px;height:180px;background:#fff;border-radius:50%;
+            border:4px solid #f8b4b4;
+            box-shadow:0 0 30px rgba(248,180,180,0.5),
+                       0 0 60px rgba(248,180,180,0.3),
+                       inset 0 0 20px rgba(248,180,180,0.15);
+            display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;}
+    .txt{font-family:monospace;font-size:1.1rem;font-weight:bold;letter-spacing:2px;color:#333;}
+    .puntos{display:flex;gap:6px;}
+    .punto{width:8px;height:8px;border-radius:50%;background:#f8b4b4;
+           animation:bounce 1.2s ease-in-out infinite;}
+    .punto:nth-child(2){animation-delay:.2s}
+    .punto:nth-child(3){animation-delay:.4s}
+    @keyframes bounce{0%,80%,100%{transform:scale(0.8);opacity:0.5}
+                      40%{transform:scale(1.2);opacity:1}}
+  </style>
+</head><body>
+  <div class="esfera">
+    <div class="txt">Cargando</div>
+    <div class="puntos">
+      <div class="punto"></div>
+      <div class="punto"></div>
+      <div class="punto"></div>
+    </div>
+  </div>
+    
+  <script>
+    fetch('/app-src?t=${token}&h=${htmlSolicitado}')
+      .then(r => r.text())
+      .then(html => { document.open(); document.write(html); document.close(); })
+      .catch(() => document.body.innerHTML = 'Error al cargar');
+  </script>
+</body></html>`;
+
+        return new Response(html, { headers: {
+          "Content-Type":  "text/html; charset=utf-8",
+          "Cache-Control": "no-store"
+        }});
+      } catch(err) {
+        return new Response("Error: " + err.message, { status: 500,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+      }
+    }
+
+    // ── /app-src?t={token} → validar token y devolver HTML real ──
+    if (pathname === "/app-src") {
+      try {
+        const token = searchParams.get("t");
+        if (!token) return new Response("Sin token", { status: 401,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+        const kvKey     = `_apptoken_${token}`;
+        const appNombre = await CloudKV.get(kvKey);
+        if (!appNombre) return new Response("Token inválido o expirado", { status: 403,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+        await CloudKV.delete(kvKey);
+        const obj = await CloudR2.get(`app/${appNombre}/${htmlSolicitado}`);
+        if (!obj) {
+            // Si no encuentra la app, servir el reloj
+            const clockObj = await CloudR2.get('app/clock/index.html');
+            if (clockObj) {
+              const clockHtml = await clockObj.text();
+              return new Response(clockHtml, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+            }
+            return new Response("App no encontrada", { status: 404,
+            headers: { "Access-Control-Allow-Origin": "*" } });
+          }
+        return new Response(obj.body, { headers: {
+          "Content-Type":                "text/html; charset=utf-8",
+          "Cache-Control":               "no-store",
+          "Access-Control-Allow-Origin": "*"
+        }});
+      } catch(err) {
+        if (!obj) {
+          // Si no encuentra la app, servir el reloj
+          const clockObj = await CloudR2.get('app/clock/index.html');
+          if (clockObj) {
+            const clockHtml = await clockObj.text();
+            return new Response(clockHtml, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+          }
+          return new Response("App no encontrada", { status: 404,
+          headers: { "Access-Control-Allow-Origin": "*" } });
+        }
+      }
+    }
     
     if (!sinTarget.includes(pathname) && (!target || !/^https?:\/\//.test(target))) {
-      return new Response("URL inválida o falta ?target=", { status: 400 });
+      return Response.redirect(reqURL.origin + "/", 302);
+    }
+    
+    // ── /r2-multipart-abort — cancelar upload incompleto ──
+    if (pathname === "/r2-multipart-abort") {
+      try {
+        const body = await request.json();
+        const { key, uploadId } = body;
+        if (!key || !uploadId) return new Response(JSON.stringify({ ok: false, error: "Faltan key y uploadId" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const mpu = CloudR2.resumeMultipartUpload(key, uploadId);
+        await mpu.abort();
+        return new Response(JSON.stringify({ ok: true, key }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // ── /r2-move — mover objeto dentro del bucket (server-side) ──
+    if (pathname === "/r2-move") {
+      try {
+        const body = await request.json();
+        const { from, to } = body;
+        if (!from || !to) return new Response(JSON.stringify({ ok: false, error: "Faltan 'from' y 'to'" }), {
+          status: 400, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        const obj = await CloudR2.get(from);
+        if (!obj) return new Response(JSON.stringify({ ok: false, error: "No encontrado: " + from }), {
+          status: 404, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+        await CloudR2.put(to, obj.body, { httpMetadata: obj.httpMetadata });
+        await CloudR2.delete(from);
+        return new Response(JSON.stringify({ ok: true, from, to }), {
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      } catch(err) {
+        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+          status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
     }
 
     // ── /r2-list — listar objetos del bucket ──
@@ -149,7 +350,7 @@ export default {
       }
     }
 
-    // ── /r2-download — descargar un objeto del bucket (stream, sin límite de RAM) ──
+    // ── /r2-download — descargar un objeto del bucket ──
     if (pathname === "/r2-download") {
       try {
         const key = searchParams.get("key");
@@ -167,10 +368,9 @@ export default {
           "Access-Control-Allow-Origin": "*",
         };
         if (objeto.size) headers["Content-Length"] = String(objeto.size);
-        // objeto.body es un ReadableStream — nunca toca arrayBuffer(), sin límite de RAM
         return new Response(objeto.body, { headers });
       } catch(err) {
-        return new Response(JSON.stringify({ ok: false, error: err.message }), {
+        return new Response(JSON.stringify({ ok: false, error: err.message, key: searchParams.get("key") || "sin key" }), {
           status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
@@ -427,9 +627,10 @@ export default {
 
     if (pathname === "/ai-proxy") {
       try {
-        const body = await request.json();
-        const { id, configId, modelo, mensaje, modeloGemini, modeloOR, promptSistema } = body;
-        if (!id || !modelo || !mensaje) return new Response("Faltan campos", { status: 400,
+        const body = await request.json();      
+        const { id, configId, motor, modelo, mensaje, promptSistema, maxTokens } = body;
+        const _maxTok = parseInt(maxTokens) || 4096;      
+        if (!id || !motor || !modelo || !mensaje) return new Response("Faltan campos", { status: 400,
                                                                               headers: { "Access-Control-Allow-Origin": "*" } });
 
         const claveConfig = configId ? `historial_${configId}` : `config_${id}`;
@@ -464,11 +665,11 @@ export default {
         let apiResp;
         let parsearDelta;
 
-        if (modelo === "claude") {
+        if (motor === "claude") {
           if (!cfg.anthropic) return new Response("Sin key Anthropic", { status: 401,
                                                                         headers: { "Access-Control-Allow-Origin": "*" } });
           const payload = {
-            model: "claude-sonnet-4-6", max_tokens: 4096, stream: true,
+            model: modelo, max_tokens: _maxTok, stream: true,
             system: promptFinal,
             messages: [...historialTruncado, { role: "user", content: mensaje }]
           };
@@ -487,11 +688,11 @@ export default {
             return "";
           };
 
-        } else if (modelo === "deepseek") {
+        } else if (motor === "deepseek") {
           if (!cfg.deepseek) return new Response("Sin key DeepSeek", { status: 401,
                                                                       headers: { "Access-Control-Allow-Origin": "*" } });
           const payload = {
-            model: "deepseek-chat", stream: true,
+            model: modelo, stream: true,
             messages: [
               { role: "system", content: promptFinal },
               ...historialTruncado,
@@ -508,10 +709,10 @@ export default {
           });
           parsearDelta = (obj) => obj.choices?.[0]?.delta?.content || "";
 
-        } else if (modelo === "gemini") {
+        } else if (motor === "gemini") {
           if (!cfg.gemini) return new Response("Sin key Gemini", { status: 401,
                                                                   headers: { "Access-Control-Allow-Origin": "*" } });
-          const modeloGeminiFinal = modeloGemini || "gemini-2.5-flash";
+          const modeloGeminiFinal = modelo;
           const historialGemini = historialTruncado.map(m => ({
             role: m.role === "assistant" ? "model" : "user",
             parts: [{ text: m.content }]
@@ -532,12 +733,11 @@ export default {
           );
           parsearDelta = (obj) => obj.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-        } else if (modelo === "openrouter") {
+        } else if (motor === "openrouter") {
           if (!cfg.openrouter) return new Response("Sin key OpenRouter", { status: 401,
                                                                           headers: { "Access-Control-Allow-Origin": "*" } });
-          const modeloORFinal = modeloOR || "anthropic/claude-sonnet-4-6";
           const payload = {
-            model: modeloORFinal,
+            model: modelo,
             stream: true,
             messages: [
               { role: "system", content: promptFinal },
@@ -550,19 +750,18 @@ export default {
             headers: {
               "Content-Type":  "application/json",
               "Authorization": `Bearer ${cfg.openrouter}`,
-              "HTTP-Referer":  "https://sw-0112358.github.io",
+              "HTTP-Referer":  reqURL.origin,
               "X-Title":       "EditorVisorIDE"
             },
             body: JSON.stringify(payload)
           });
           parsearDelta = (obj) => obj.choices?.[0]?.delta?.content || "";
 
-        } else if (modelo === "openai") {
+        } else if (motor === "openai") {
           if (!cfg.openai) return new Response("Sin key OpenAI", { status: 401,
                                                                     headers: { "Access-Control-Allow-Origin": "*" } });
-          const modeloOpenAIFinal = body.modeloOpenAI || "gpt-4o";
           const payload = {
-            model: modeloOpenAIFinal,
+            model: modelo,
             stream: true,
             messages: [
               { role: "system", content: promptFinal },
@@ -581,7 +780,7 @@ export default {
           parsearDelta = (obj) => obj.choices?.[0]?.delta?.content || "";
 
         } else {
-          return new Response("Modelo no soportado", { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
+          return new Response(`Motor no soportado: ${motor}`, { status: 400, headers: { "Access-Control-Allow-Origin": "*" } });
         }
 
         // ── Leer el stream, reenviarlo al cliente Y acumular la respuesta completa ──
@@ -767,7 +966,7 @@ export default {
       }
     }
 
-    // ── /batch-download — descarga secuencial con stream, genérico ──
+    // ── /batch-download — descarga secuencial con stream, genérico, beta ──
     if (pathname === "/batch-download") {
       try {
         const dataParam = searchParams.get("data");
@@ -997,8 +1196,14 @@ export default {
         fetchOptions.body = await request.arrayBuffer();
       }
       const resp = await fetch(target, fetchOptions);
-      const ct   = resp.headers.get("content-type") || "";
+      let ct   = resp.headers.get("content-type") || "";
       const buf  = await resp.arrayBuffer();
+      
+      // Forzar UTF-8 en respuestas de texto
+      if (ct.includes("text/") || ct.includes("application/json") || ct.includes("application/javascript")) {
+        ct = ct.replace(/charset=[^;]+/i, "").trim() + "; charset=utf-8";
+      }
+      
       return new Response(buf, {
         status: resp.status,
         headers: {
